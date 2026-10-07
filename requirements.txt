@@ -1,0 +1,7 @@
+mediapipe==0.10.35
+opencv-python==4.11.0.86
+numpy==2.2.6
+plyer==2.1.0
+pystray==0.19.5
+Pillow==11.3.0
+psutil==7.0.0

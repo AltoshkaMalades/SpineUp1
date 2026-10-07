@@ -1,0 +1,37 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+venv/
+.venv/
+env/
+.env
+.env.*
+
+.idea/
+.vscode/
+
+build/
+dist/
+*.spec.bak
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local calibration and posture history
+.spineup/
+calibration.json
+*.sqlite
+*.sqlite3
+*.db
+
+# Credentials, private keys, and certificates
+secrets.*
+credentials.*
+*_secret*
+*_credentials*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*

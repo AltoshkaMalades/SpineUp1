@@ -162,6 +162,7 @@ class PostureDatabase:
                 )
         return episodes
 
+
     def close(self) -> None:
         """Close the SQLite connection.
 

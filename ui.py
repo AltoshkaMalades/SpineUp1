@@ -14,6 +14,8 @@ import numpy as np
 import psutil
 from PIL import Image, ImageTk
 from plyer import notification
+from break_window import BreakWindow
+from exercises import EXERCISES
 
 from alert_manager import AlertManager, AlertUpdate
 from calibration import Calibration, calibration_from_angles, save_calibration
@@ -170,6 +172,7 @@ class SpineUpWindow:
         self.alert_manager = AlertManager(
             deviation_threshold=POSTURE_DEVIATION_THRESHOLD_DEGREES
         )
+        self.break_window: BreakWindow | None = None
         self.monitoring = calibration is not None
         self.capture: cv2.VideoCapture | None = None
         self.last_frame: np.ndarray | None = None
@@ -300,7 +303,7 @@ class SpineUpWindow:
 
         footer = tk.Frame(self.root, padx=16, pady=8)
         footer.grid(row=2, column=0, sticky="ew")
-        footer.columnconfigure(3, weight=1)
+        footer.columnconfigure(4, weight=1)
         tk.Button(
             footer,
             text="Калибровка",
@@ -309,6 +312,14 @@ class SpineUpWindow:
             padx=12,
             pady=7,
         ).grid(row=0, column=0, padx=(0, 8))
+        tk.Button(
+            footer,
+            text="Перерыв 1 мин",
+            command=self.start_posture_break,
+            font=("Segoe UI", 12),
+            padx=12,
+            pady=7,
+        ).grid(row=0, column=3, padx=8)
         self.pause_button = tk.Button(
             footer,
             textvariable=self.pause_button_text,
@@ -332,7 +343,7 @@ class SpineUpWindow:
             font=("Segoe UI", 10),
             fg="#4A5558",
             anchor="e",
-        ).grid(row=0, column=3, sticky="e")
+        ).grid(row=0, column=4, sticky="e")
 
     def _set_status(self, state: str) -> None:
         """Set the large status label and high-visibility color frame.
@@ -1021,6 +1032,17 @@ class SpineUpWindow:
             self.latest_analysis_time = 0.0
             self._set_status("normal")
         self._update_pause_button()
+    def start_posture_break(self) -> None:
+            """Open the 1-minute posture exercises window."""
+            if self.break_window is not None:
+                return
+            self.break_window = BreakWindow(self.root, EXERCISES, self._on_break_finished)
+    
+    def _on_break_finished(self, completed: bool) -> None:
+            """Called when the break window closes."""
+            self.break_window = None
+            if completed:
+                self.database.record_break(datetime.now().astimezone())
 
     def show_statistics(self) -> None:
         """Open a window with today's good-posture percentage and episodes.
@@ -1082,3 +1104,4 @@ class SpineUpWindow:
         self.detector.close()
         self.database.close()
         self.root.destroy()
+    

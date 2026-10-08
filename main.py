@@ -11,6 +11,8 @@ from config import CAMERA_INDEX, DATABASE_PATH, MODEL_PATH
 from database import PostureDatabase
 from pose_detector import PoseDetector, probe_camera
 from ui import SpineUpWindow
+from PIL import Image, ImageTk, ImageSequence
+import tkinter as tk
 
 
 def main() -> int:
@@ -41,7 +43,24 @@ def main() -> int:
     application = SpineUpWindow(detector, database, calibration, CAMERA_INDEX)
     application.run()
     return 0
+def show_gif(path, label):
+    gif = Image.open(path)
+
+    frames = [
+        ImageTk.PhotoImage(frame.copy().convert("RGBA"))
+        for frame in ImageSequence.Iterator(gif)
+    ]
+
+    def animate(index=0):
+        label.config(image=frames[index])
+        label.image = frames[index]
+
+        label.after(100, animate, (index + 1) % len(frames))
+
+    animate()
+    
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

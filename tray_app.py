@@ -15,12 +15,14 @@ from config import (
     APP_NAME,
     CAMERA_INDEX,
     FORWARD_HEAD_DEVIATION_THRESHOLD_PERCENT,
-    ICON_PNG_PATH,
     NECK_ANGLE_DEVIATION_THRESHOLD_DEGREES,
     NORMALIZED_HEAD_HEIGHT_DEVIATION_THRESHOLD,
     POSTURE_DEVIATION_THRESHOLD_DEGREES,
     SAMPLE_INTERVAL_SECONDS,
+    __version__,
+    resource_path,
 )
+from autostart import disable_autostart, enable_autostart, is_autostart_enabled
 from database import PostureDatabase
 from pose_detector import PoseDetector, open_camera
 from posture_analyzer import analyze_posture, posture_metric_deviations, posture_exceeds_threshold
@@ -77,8 +79,14 @@ class TrayApplication:
             APP_NAME,
             menu=pystray.Menu(
                 pystray.MenuItem(self._monitoring_label, self._toggle_monitoring),
+                pystray.MenuItem(
+                    "Launch at startup",
+                    self._toggle_autostart,
+                    checked=self._autostart_checked,
+                ),
                 pystray.MenuItem("Показать статус", self._show_status),
                 pystray.MenuItem("Статистика за сегодня", self._show_statistics),
+                pystray.MenuItem(f"{APP_NAME} v{__version__}", None, enabled=False),
                 pystray.MenuItem("Выход", self._quit),
             ),
         )
@@ -139,6 +147,33 @@ class TrayApplication:
             self._pause_monitoring()
         else:
             self.start_monitoring()
+
+    def _autostart_checked(self, _item: object) -> bool:
+        """Read the current startup setting for pystray's check mark."""
+        try:
+            return is_autostart_enabled()
+        except Exception as error:
+            self._notify_startup_error(error)
+            return False
+
+    def _toggle_autostart(self, _icon: object, _item: object) -> None:
+        """Toggle Windows startup registration from the tray menu."""
+        try:
+            if is_autostart_enabled():
+                disable_autostart()
+            else:
+                enable_autostart()
+            self._icon.update_menu()
+        except Exception as error:
+            self._notify_startup_error(error)
+
+    def _notify_startup_error(self, error: Exception) -> None:
+        """Report a registry error without allowing it to stop the app."""
+        message = f"Could not update Launch at startup: {error}"
+        try:
+            notification.notify(title=APP_NAME, message=message, app_name=APP_NAME)
+        except Exception:
+            print(f"[SpineUp] {message}")
 
     def _pause_monitoring(self) -> None:
         """Pause capture and close any episode currently being recorded.
@@ -329,7 +364,7 @@ class TrayApplication:
             A 64 by 64 Pillow image.
         """
         colors = {"green": "#28A879", "amber": "#E2A52B", "gray": "#92999B"}
-        image = Image.open(ICON_PNG_PATH).convert("RGBA")
+        image = Image.open(resource_path("logo/logo.png")).convert("RGBA")
         image = image.resize((64, 64), Image.Resampling.LANCZOS)
         draw = ImageDraw.Draw(image)
         draw.ellipse((43, 43, 63, 63), fill="white")

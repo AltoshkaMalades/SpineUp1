@@ -5,6 +5,7 @@ from typing import Callable, Sequence
 
 from PIL import Image, ImageSequence, ImageTk
 
+from config import resource_path
 from exercises import Exercise
 
 GIF_DELAY_MS = 300  # чем больше число, тем медленнее гифка
@@ -86,7 +87,7 @@ class BreakWindow:
             self.window.after_cancel(self._gif_after_id)
             self._gif_after_id = None
 
-        gif = Image.open(path)
+        gif = Image.open(resource_path(path))
         self._gif_frames = []
         for frame in ImageSequence.Iterator(gif):
             frame = frame.copy().convert("RGBA")

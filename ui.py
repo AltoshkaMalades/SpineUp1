@@ -16,6 +16,7 @@ from PIL import Image, ImageTk
 from plyer import notification
 from break_window import BreakWindow
 from exercises import EXERCISES
+from autostart import disable_autostart, enable_autostart, is_autostart_enabled
 
 from alert_manager import AlertManager, AlertUpdate
 from calibration import Calibration, calibration_from_angles, save_calibration
@@ -30,6 +31,7 @@ from config import (
     PREVIEW_ACTIVE_INTERVAL_MS,
     PREVIEW_BACKGROUND_INTERVAL_MS,
     SAMPLE_INTERVAL_SECONDS,
+    __version__,
 )
 from database import PostureDatabase
 from pose_detector import PoseDetection, PoseDetector, open_camera
@@ -161,13 +163,14 @@ class SpineUpWindow:
         self.calibration = calibration
         self.camera_index = camera_index
         self.root = tk.Tk()
-        self.root.title(APP_NAME)
+        self.root.title(f"{APP_NAME} v{__version__}")
         self._window_icon = tk.PhotoImage(file=str(ICON_PNG_PATH))
         self.root.iconbitmap(default=str(ICON_ICO_PATH))
         self.root.iconphoto(True, self._window_icon)
         self.root.geometry("1080x760")
         self.root.minsize(760, 560)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self._build_app_menu()
 
         self.alert_manager = AlertManager(
             deviation_threshold=POSTURE_DEVIATION_THRESHOLD_DEGREES
@@ -224,6 +227,51 @@ class SpineUpWindow:
             None.
         """
         self.root.mainloop()
+
+    def _build_app_menu(self) -> None:
+        """Add the startup option to the window used by the main entry point."""
+        menu_bar = tk.Menu(self.root)
+        settings_menu = tk.Menu(menu_bar, tearoff=False)
+        self._autostart_var = tk.BooleanVar(value=self._read_autostart_enabled())
+        settings_menu.add_checkbutton(
+            label="Launch at startup",
+            variable=self._autostart_var,
+            command=self._toggle_autostart,
+        )
+        settings_menu.add_separator()
+        settings_menu.add_command(
+            label=f"{APP_NAME} v{__version__}", state="disabled"
+        )
+        menu_bar.add_cascade(label="Settings", menu=settings_menu)
+        self.root.config(menu=menu_bar)
+
+    def _read_autostart_enabled(self) -> bool:
+        """Read startup state without allowing registry errors to stop launch."""
+        try:
+            return is_autostart_enabled()
+        except Exception as error:
+            self._notify_autostart_error(error)
+            return False
+
+    def _toggle_autostart(self) -> None:
+        """Apply the startup menu selection and restore it if registration fails."""
+        enabled = self._autostart_var.get()
+        try:
+            if enabled:
+                enable_autostart()
+            else:
+                disable_autostart()
+        except Exception as error:
+            self._autostart_var.set(not enabled)
+            self._notify_autostart_error(error)
+
+    def _notify_autostart_error(self, error: Exception) -> None:
+        """Show registry errors as a desktop notification, without crashing."""
+        message = f"Could not update Launch at startup: {error}"
+        try:
+            notification.notify(title=APP_NAME, message=message, app_name=APP_NAME)
+        except Exception:
+            print(f"[SpineUp] {message}")
 
     def _build_widgets(self) -> None:
         """Create the status banner, video frame, and action buttons.

@@ -5,12 +5,20 @@ import sys
 
 
 APP_NAME = "SpineUp"
+__version__ = "0.1.0"
 PROJECT_DIR = Path(__file__).resolve().parent
-RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", PROJECT_DIR))
-ICON_PNG_PATH = RESOURCE_DIR / "logo" / "logo.png"
-ICON_ICO_PATH = RESOURCE_DIR / "logo" / "logo.ico"
-ASSET_DIR = RESOURCE_DIR / "assets"
-MODEL_PATH = PROJECT_DIR / "models" / "pose_landmarker_lite.task"
+
+
+def resource_path(relative_path: str | Path) -> Path:
+	"""Return a resource path for source runs and PyInstaller builds."""
+	resource_dir = Path(getattr(sys, "_MEIPASS", PROJECT_DIR))
+	return resource_dir / relative_path
+
+
+ICON_PNG_PATH = resource_path("logo/logo.png")
+ICON_ICO_PATH = resource_path("logo/logo.ico")
+ASSET_DIR = resource_path("assets")
+MODEL_PATH = resource_path("models/pose_landmarker_lite.task")
 DATA_DIR = Path.home() / ".spineup"
 CALIBRATION_PATH = DATA_DIR / "calibration.json"
 DATABASE_PATH = DATA_DIR / "spineup.sqlite3"

@@ -1,18 +1,43 @@
 """SpineUp offline posture monitor entry point."""
 
 import ctypes
+import msvcrt
 import os
 
 if os.name == "nt":
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("spineup.app")
 
 from calibration import load_calibration
-from config import CAMERA_INDEX, DATABASE_PATH, MODEL_PATH
+from config import CAMERA_INDEX, DATA_DIR, DATABASE_PATH, MODEL_PATH, resource_path
 from database import PostureDatabase
 from pose_detector import PoseDetector, probe_camera
 from ui import SpineUpWindow
 from PIL import Image, ImageTk, ImageSequence
 import tkinter as tk
+
+
+_instance_lock = None
+
+
+def acquire_single_instance() -> bool:
+    """Hold a Windows file lock so a second launch exits quietly."""
+    global _instance_lock
+    lock_file = None
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        lock_file = (DATA_DIR / "spineup.lock").open("a+b")
+        lock_file.seek(0)
+        if not lock_file.read(1):
+            lock_file.write(b"\0")
+            lock_file.flush()
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        if lock_file is not None:
+            lock_file.close()
+        return False
+    _instance_lock = lock_file
+    return True
 
 
 def main() -> int:
@@ -21,6 +46,8 @@ def main() -> int:
     Returns:
         Process exit status; zero indicates a normal shutdown.
     """
+    if not acquire_single_instance():
+        return 0
     print("[SpineUp] Запуск оффлайн-монитора осанки.")
     print(f"[SpineUp] Локальная модель: {MODEL_PATH}")
     try:
@@ -44,7 +71,7 @@ def main() -> int:
     application.run()
     return 0
 def show_gif(path, label):
-    gif = Image.open(path)
+    gif = Image.open(resource_path(path))
 
     frames = [
         ImageTk.PhotoImage(frame.copy().convert("RGBA"))

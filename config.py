@@ -9,6 +9,7 @@ PROJECT_DIR = Path(__file__).resolve().parent
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", PROJECT_DIR))
 ICON_PNG_PATH = RESOURCE_DIR / "logo" / "logo.png"
 ICON_ICO_PATH = RESOURCE_DIR / "logo" / "logo.ico"
+ASSET_DIR = RESOURCE_DIR / "assets"
 MODEL_PATH = PROJECT_DIR / "models" / "pose_landmarker_lite.task"
 DATA_DIR = Path.home() / ".spineup"
 CALIBRATION_PATH = DATA_DIR / "calibration.json"

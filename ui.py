@@ -14,8 +14,8 @@ import numpy as np
 import psutil
 from PIL import Image, ImageTk
 from plyer import notification
-from break_window import BreakWindow
-from exercises import EXERCISES
+from break_window import BreakPopup, BreakWindow
+from exercises import EXERCISES, Exercise
 from autostart import disable_autostart, enable_autostart, is_autostart_enabled
 
 from alert_manager import AlertManager, AlertUpdate
@@ -31,6 +31,8 @@ from config import (
     PREVIEW_ACTIVE_INTERVAL_MS,
     PREVIEW_BACKGROUND_INTERVAL_MS,
     SAMPLE_INTERVAL_SECONDS,
+    BREAK_SNOOZE_SECONDS,
+    SITTING_BREAK_SECONDS,
     __version__,
 )
 from database import PostureDatabase
@@ -176,6 +178,11 @@ class SpineUpWindow:
             deviation_threshold=POSTURE_DEVIATION_THRESHOLD_DEGREES
         )
         self.break_window: BreakWindow | None = None
+        self.break_popup: BreakPopup | None = None
+        self._break_exercise_index = -1
+        self._sitting_elapsed = 0.0
+        self._last_sitting_tick = time.monotonic()
+        self._break_snooze_until: float | None = None
         self.monitoring = calibration is not None
         self.capture: cv2.VideoCapture | None = None
         self.last_frame: np.ndarray | None = None
@@ -217,6 +224,7 @@ class SpineUpWindow:
         self._update_calibration_label()
         self._update_pause_button()
         self.root.after(0, self._video_tick)
+        self.root.after(1000, self._check_break_reminder)
         if self.calibration is None:
             self.root.after(300, self.calibrate)
 
@@ -237,6 +245,9 @@ class SpineUpWindow:
             label="Launch at startup",
             variable=self._autostart_var,
             command=self._toggle_autostart,
+        )
+        settings_menu.add_command(
+            label="Test break popup", command=self.test_break_popup
         )
         settings_menu.add_separator()
         settings_menu.add_command(
@@ -479,6 +490,70 @@ class SpineUpWindow:
             else PREVIEW_BACKGROUND_INTERVAL_MS
         )
         self.root.after(interval_ms, self._video_tick)
+
+    def _check_break_reminder(self) -> None:
+        """Count monitored time and open a reminder when its deadline arrives."""
+        if self.closed:
+            return
+        now = time.monotonic()
+        elapsed = max(now - self._last_sitting_tick, 0.0)
+        self._last_sitting_tick = now
+        if self.monitoring and self.break_popup is None:
+            if self._break_snooze_until is not None:
+                if now >= self._break_snooze_until:
+                    self._break_snooze_until = None
+                    self._fire_break_reminder()
+            else:
+                self._sitting_elapsed += elapsed
+                if self._sitting_elapsed >= SITTING_BREAK_SECONDS:
+                    self._fire_break_reminder()
+        self.root.after(1000, self._check_break_reminder)
+
+    def _fire_break_reminder(self) -> None:
+        """Show the plain notification and then try to open the exercise popup."""
+        self._sitting_elapsed = 0.0
+        message = "You've been sitting for 60 minutes. Take a 1-minute posture break."
+        try:
+            notification.notify(title=APP_NAME, message=message, app_name=APP_NAME)
+        except Exception as error:
+            print(f"[SpineUp] Не удалось показать уведомление: {error}")
+        self._show_break_popup()
+
+    def _next_break_exercise(self) -> Exercise:
+        """Advance to the next exercise so consecutive popups differ."""
+        self._break_exercise_index = (self._break_exercise_index + 1) % len(EXERCISES)
+        return EXERCISES[self._break_exercise_index]
+
+    def _show_break_popup(self) -> None:
+        """Open the compact popup without allowing display errors to escape."""
+        if self.break_popup is not None:
+            return
+        try:
+            self.break_popup = BreakPopup(
+                self.root, self._next_break_exercise(), self._on_break_popup_finished
+            )
+        except Exception as error:
+            self.break_popup = None
+            print(f"[SpineUp] Не удалось показать перерыв: {error}")
+
+    def test_break_popup(self) -> None:
+        """Open the reminder popup from Settings for a manual check."""
+        self._show_break_popup()
+
+    def _on_break_popup_finished(self, action: str) -> None:
+        """Apply completion or snooze after the reminder popup closes."""
+        self.break_popup = None
+        now = time.monotonic()
+        self._last_sitting_tick = now
+        if action == "done":
+            self._sitting_elapsed = 0.0
+            self._break_snooze_until = None
+            try:
+                self.database.record_break(datetime.now().astimezone())
+            except Exception as error:
+                print(f"[SpineUp] Не удалось сохранить перерыв: {error}")
+        else:
+            self._break_snooze_until = now + BREAK_SNOOZE_SECONDS
 
     def _preview_visible(self) -> bool:
         """Return whether the window is focused and not minimized.
@@ -1141,6 +1216,9 @@ class SpineUpWindow:
         if self.closed:
             return
         self.closed = True
+        if self.break_popup is not None:
+            self.break_popup._finish("later")
+            self.break_popup = None
         if self.capture is not None:
             self.capture.release()
             self.capture = None

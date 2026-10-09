@@ -334,6 +334,18 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(episodes[0], (started_at, ended_at))
             database.close()
 
+    def test_completed_break_is_saved_in_posture_database(self) -> None:
+        """Store completed breaks alongside existing posture history."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            database = PostureDatabase(Path(temporary_directory) / "history.sqlite3")
+            completed_at = datetime.now().astimezone()
+            database.record_break(completed_at)
+            row = database._connection.execute(
+                "SELECT completed_at FROM posture_breaks"
+            ).fetchone()
+            self.assertEqual(datetime.fromisoformat(row[0]), completed_at)
+            database.close()
+
 
 class CalibrationTests(unittest.TestCase):
     """Check upper-body calibration and rejection of the old hip-based baseline."""

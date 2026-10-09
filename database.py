@@ -32,6 +32,12 @@ class PostureDatabase:
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_posture_episodes_start ON posture_episodes(start_time)"
         )
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS posture_breaks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                completed_at TEXT NOT NULL
+            )"""
+        )
         self._connection.commit()
         self._lock = Lock()
 
@@ -81,6 +87,14 @@ class PostureDatabase:
             self._connection.execute(
                 "UPDATE posture_episodes SET end_time = ? WHERE id = ?",
                 (ended_at.isoformat(), episode_id),
+            )
+
+    def record_break(self, completed_at: datetime) -> None:
+        """Record a completed exercise break in the existing local database."""
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO posture_breaks (completed_at) VALUES (?)",
+                (completed_at.isoformat(),),
             )
 
     def daily_poor_posture_percent(

@@ -9,6 +9,12 @@ from config import BREAK_DURATION_SECONDS, resource_path
 from exercises import Exercise
 
 GIF_DELAY_MS = 300  # чем больше число, тем медленнее гифка
+BACKGROUND = "#101B19"
+SURFACE = "#1A2925"
+TEXT = "#E4F0EA"
+MUTED = "#9EB2A8"
+ACCENT = "#64D6BC"
+FONT = "Segoe UI"
 
 
 def _load_gif_frames(path: str, size: tuple[int, int]) -> list[ImageTk.PhotoImage]:
@@ -54,25 +60,50 @@ class BreakWindow:
         self.window = tk.Toplevel(parent)
         self.window.title("Перерыв для осанки")
         self.window.geometry("520x360")
+        self.window.configure(bg=BACKGROUND)
         self.window.attributes("-topmost", True)
         self.window.protocol("WM_DELETE_WINDOW", self.cancel)
 
-        self.countdown_label = tk.Label(self.window, font=("Segoe UI", 40, "bold"), pady=8)
+        self.countdown_label = tk.Label(
+            self.window,
+            font=(FONT, 40, "bold"),
+            pady=8,
+            bg=BACKGROUND,
+            fg=ACCENT,
+        )
         self.countdown_label.pack()
-        self.title_label = tk.Label(self.window, font=("Segoe UI", 16, "bold"))
+        self.title_label = tk.Label(
+            self.window, font=(FONT, 16, "bold"), bg=BACKGROUND, fg=TEXT
+        )
         self.title_label.pack()
         self.description_label = tk.Label(
-            self.window, font=("Segoe UI", 12), wraplength=460, justify="center", pady=12
+            self.window,
+            font=(FONT, 11),
+            wraplength=460,
+            justify="center",
+            pady=12,
+            bg=BACKGROUND,
+            fg=TEXT,
         )
         self.description_label.pack()
-        self.step_label = tk.Label(self.window, font=("Segoe UI", 10), fg="#4A5558")
+        self.step_label = tk.Label(
+            self.window, font=(FONT, 10), fg=MUTED, bg=BACKGROUND
+        )
         self.step_label.pack()
-        self.animation_label = tk.Label(self.window)
+        self.animation_label = tk.Label(self.window, bg=BACKGROUND)
         self.animation_label.pack(pady=10)
 
         tk.Button(
             self.window, text="Закончить раньше", command=self.cancel,
-            font=("Segoe UI", 11), padx=10, pady=5,
+            font=(FONT, 10, "bold"),
+            padx=10,
+            pady=7,
+            bg=SURFACE,
+            fg=TEXT,
+            activebackground="#2F5D50",
+            activeforeground=TEXT,
+            relief="flat",
+            cursor="hand2",
         ).pack(pady=14)
 
         self._render()
@@ -162,6 +193,7 @@ class BreakPopup:
         self.window = tk.Toplevel(parent)
         self.window.title("SpineUp")
         self.window.resizable(False, False)
+        self.window.configure(bg=BACKGROUND)
         self.window.attributes("-topmost", True)
         self.window.focusmodel("passive")
         self.window.protocol("WM_DELETE_WINDOW", self.later)
@@ -174,6 +206,8 @@ class BreakPopup:
             justify="center",
             padx=14,
             pady=10,
+            bg=BACKGROUND,
+            fg=TEXT,
         ).pack(fill="x")
         tk.Label(
             self.window,
@@ -182,20 +216,36 @@ class BreakPopup:
             wraplength=320,
             justify="center",
             padx=12,
+            bg=BACKGROUND,
+            fg=MUTED,
         ).pack(fill="x")
-        self.animation_label = tk.Label(self.window)
+        self.animation_label = tk.Label(self.window, bg=BACKGROUND)
         self.animation_label.pack(pady=(4, 0))
         self.countdown_label = tk.Label(
-            self.window, text="60 seconds", font=("Segoe UI", 18, "bold")
+            self.window,
+            text="60 seconds",
+            font=(FONT, 18, "bold"),
+            bg=BACKGROUND,
+            fg=ACCENT,
         )
         self.countdown_label.pack(pady=4)
 
-        buttons = tk.Frame(self.window)
+        buttons = tk.Frame(self.window, bg=BACKGROUND)
         buttons.pack(pady=(0, 10))
-        tk.Button(buttons, text="Done", command=self.done, width=10).pack(
+        button_style = {
+            "bg": SURFACE,
+            "fg": TEXT,
+            "activebackground": "#2F5D50",
+            "activeforeground": TEXT,
+            "relief": "flat",
+            "cursor": "hand2",
+            "font": (FONT, 9, "bold"),
+            "pady": 5,
+        }
+        tk.Button(buttons, text="Done", command=self.done, width=10, **button_style).pack(
             side="left", padx=6
         )
-        tk.Button(buttons, text="Later", command=self.later, width=10).pack(
+        tk.Button(buttons, text="Later", command=self.later, width=10, **button_style).pack(
             side="left", padx=6
         )
 

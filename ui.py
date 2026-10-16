@@ -1,17 +1,19 @@
 """Tkinter interface for live SpineUp posture monitoring."""
 
 import queue
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox
-from typing import Sequence
+from typing import Callable, Sequence
 
 import cv2
 import numpy as np
 import psutil
+import pystray
 from PIL import Image, ImageTk
 from plyer import notification
 from break_window import BreakPopup, BreakWindow
@@ -36,7 +38,10 @@ from config import (
     __version__,
 )
 from database import PostureDatabase
+from demo_data import load_demo_data
 from pose_detector import PoseDetection, PoseDetector, open_camera
+from statistics_window import StatisticsWindow
+from storage import EventType, SessionStorage
 from posture_analyzer import (
     PostureAngles,
     PostureMetricFilter,
@@ -148,6 +153,7 @@ class SpineUpWindow:
         database: PostureDatabase,
         calibration: Calibration | None,
         camera_index: int = CAMERA_INDEX,
+        storage: SessionStorage | None = None,
     ) -> None:
         """Create the SpineUp window and initialize camera/UI state.
 
@@ -162,9 +168,11 @@ class SpineUpWindow:
         """
         self.detector = detector
         self.database = database
+        self.storage = storage
         self.calibration = calibration
         self.camera_index = camera_index
         self.root = tk.Tk()
+        self.root.configure(bg="#101B19")
         self.root.title(f"{APP_NAME} v{__version__}")
         self._window_icon = tk.PhotoImage(file=str(ICON_PNG_PATH))
         self.root.iconbitmap(default=str(ICON_ICO_PATH))
@@ -204,6 +212,9 @@ class SpineUpWindow:
         self.latest_analysis_time = 0.0
         self.next_camera_retry = 0.0
         self.episode_id: int | None = None
+        self._session_id: int | None = None
+        self._statistics_window: StatisticsWindow | None = None
+        self._tray_icon: pystray.Icon | None = None
         self.closed = False
         self.calibration_mode = False
         self.calibration_in_progress = False
@@ -221,8 +232,11 @@ class SpineUpWindow:
         self.pause_button_text = tk.StringVar()
         self._build_widgets()
         self._set_status("paused" if not self.monitoring else "normal")
+        if self.monitoring:
+            self._start_monitoring_session()
         self._update_calibration_label()
         self._update_pause_button()
+        self._start_tray_icon()
         self.root.after(0, self._video_tick)
         self.root.after(1000, self._check_break_reminder)
         if self.calibration is None:
@@ -238,8 +252,22 @@ class SpineUpWindow:
 
     def _build_app_menu(self) -> None:
         """Add the startup option to the window used by the main entry point."""
-        menu_bar = tk.Menu(self.root)
-        settings_menu = tk.Menu(menu_bar, tearoff=False)
+        menu_bar = tk.Menu(
+            self.root,
+            tearoff=False,
+            bg="#1A2925",
+            fg="#E4F0EA",
+            activebackground="#2F5D50",
+            activeforeground="white",
+        )
+        settings_menu = tk.Menu(
+            menu_bar,
+            tearoff=False,
+            bg="#1A2925",
+            fg="#E4F0EA",
+            activebackground="#2F5D50",
+            activeforeground="white",
+        )
         self._autostart_var = tk.BooleanVar(value=self._read_autostart_enabled())
         settings_menu.add_checkbutton(
             label="Launch at startup",
@@ -249,12 +277,111 @@ class SpineUpWindow:
         settings_menu.add_command(
             label="Test break popup", command=self.test_break_popup
         )
+        settings_menu.add_command(
+            label="Load demo data", command=self._load_demo_data_from_menu
+        )
         settings_menu.add_separator()
         settings_menu.add_command(
             label=f"{APP_NAME} v{__version__}", state="disabled"
         )
         menu_bar.add_cascade(label="Settings", menu=settings_menu)
+        menu_bar.add_command(label="Statistics", command=self.show_statistics)
         self.root.config(menu=menu_bar)
+
+    def _start_tray_icon(self) -> None:
+        """Expose monitoring controls and statistics in the Windows tray."""
+        try:
+            with Image.open(ICON_PNG_PATH) as source:
+                icon_image = source.convert("RGBA")
+            self._tray_icon = pystray.Icon(
+                APP_NAME,
+                icon_image,
+                APP_NAME,
+                menu=pystray.Menu(
+                    pystray.MenuItem("Open SpineUp", self._tray_open_window),
+                    pystray.MenuItem(
+                        self._tray_monitoring_label, self._tray_toggle_monitoring
+                    ),
+                    pystray.MenuItem("Statistics", self._tray_show_statistics),
+                    pystray.Menu.SEPARATOR,
+                    pystray.MenuItem("Exit", self._tray_close),
+                ),
+            )
+            self._tray_icon.run_detached()
+        except Exception as error:
+            self._tray_icon = None
+            print(f"[SpineUp] Не удалось запустить значок в трее: {error}")
+
+    def _dispatch_tray_action(self, action: Callable[[], None]) -> None:
+        try:
+            self.root.after(0, action)
+        except tk.TclError as error:
+            print(f"[SpineUp] Не удалось передать действие из трея: {error}")
+
+    def _tray_monitoring_label(self, _item: object) -> str:
+        del _item
+        return "Pause monitoring" if self.monitoring else "Start monitoring"
+
+    def _tray_open_window(self, _icon: object, _item: object) -> None:
+        del _icon, _item
+        self._dispatch_tray_action(self._show_main_window)
+
+    def _tray_toggle_monitoring(self, _icon: object, _item: object) -> None:
+        del _icon, _item
+        self._dispatch_tray_action(self.toggle_monitoring)
+
+    def _tray_show_statistics(self, _icon: object, _item: object) -> None:
+        del _icon, _item
+        self._dispatch_tray_action(self.show_statistics)
+
+    def _tray_close(self, _icon: object, _item: object) -> None:
+        del _icon, _item
+        self._dispatch_tray_action(self.close)
+
+    def _show_main_window(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+
+    def _start_monitoring_session(self) -> None:
+        storage = getattr(self, "storage", None)
+        if storage is None:
+            return
+        try:
+            self._session_id = storage.start_session()
+        except (OSError, sqlite3.Error) as error:
+            self._session_id = None
+            print(f"[SpineUp] Не удалось открыть сессию мониторинга: {error}")
+
+    def _end_monitoring_session(self) -> None:
+        storage = getattr(self, "storage", None)
+        if storage is None:
+            return
+        try:
+            storage.end_session()
+        except (OSError, sqlite3.Error) as error:
+            print(f"[SpineUp] Не удалось закрыть сессию мониторинга: {error}")
+        finally:
+            self._session_id = None
+
+    def _log_monitoring_event(self, event_type: EventType) -> None:
+        storage = getattr(self, "storage", None)
+        if storage is None:
+            return
+        try:
+            storage.log_event(
+                event_type, session_id=getattr(self, "_session_id", None)
+            )
+        except (OSError, sqlite3.Error) as error:
+            print(f"[SpineUp] Не удалось сохранить событие {event_type}: {error}")
+
+    def _log_monitoring_frame(self, is_slouching: bool) -> None:
+        storage = getattr(self, "storage", None)
+        if storage is None:
+            return
+        try:
+            storage.log_frame(is_slouching)
+        except (OSError, sqlite3.Error) as error:
+            print(f"[SpineUp] Не удалось сохранить кадр мониторинга: {error}")
 
     def _read_autostart_enabled(self) -> bool:
         """Read startup state without allowing registry errors to stop launch."""
@@ -293,7 +420,7 @@ class SpineUpWindow:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
 
-        status_panel = tk.Frame(self.root, bg="#218C55", padx=18, pady=14)
+        status_panel = tk.Frame(self.root, bg="#117C72", padx=18, pady=14)
         status_panel.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 10))
         status_panel.columnconfigure(0, weight=1)
         self.status_label = tk.Label(
@@ -324,15 +451,15 @@ class SpineUpWindow:
         )
         self.timer_label.grid(row=1, column=1, sticky="e", padx=(12, 0), pady=(5, 0))
 
-        video_shell = tk.Frame(self.root, bg="#218C55", padx=7, pady=7)
+        video_shell = tk.Frame(self.root, bg="#117C72", padx=7, pady=7)
         video_shell.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 10))
         video_shell.rowconfigure(0, weight=1)
         video_shell.columnconfigure(0, weight=1)
         self.video_label = tk.Label(
             video_shell,
             text="Подключение к камере...",
-            bg="#202729",
-            fg="white",
+            bg="#0E1715",
+            fg="#DDEBE5",
             font=("Segoe UI", 16),
         )
         self.video_label.grid(row=0, column=0, sticky="nsew")
@@ -342,8 +469,8 @@ class SpineUpWindow:
         self.calibration_banner = tk.Label(
             video_shell,
             textvariable=self.calibration_banner_text,
-            bg="#202729",
-            fg="white",
+            bg="#0E1715",
+            fg="#DDEBE5",
             font=("Segoe UI", 17, "bold"),
             padx=14,
             pady=8,
@@ -353,21 +480,27 @@ class SpineUpWindow:
         self.calibration_countdown = tk.Label(
             video_shell,
             textvariable=self.calibration_countdown_text,
-            bg="#202729",
-            fg="white",
+            bg="#0E1715",
+            fg="#DDEBE5",
             font=("Segoe UI", 48, "bold"),
             padx=18,
             pady=6,
         )
 
-        footer = tk.Frame(self.root, padx=16, pady=8)
+        footer = tk.Frame(self.root, bg="#101B19", padx=16, pady=8)
         footer.grid(row=2, column=0, sticky="ew")
         footer.columnconfigure(4, weight=1)
         tk.Button(
             footer,
             text="Калибровка",
             command=self.calibrate,
-            font=("Segoe UI", 12),
+            font=("Segoe UI", 10, "bold"),
+            bg="#1A2925",
+            fg="#E4F0EA",
+            activebackground="#2F5D50",
+            activeforeground="white",
+            relief="flat",
+            cursor="hand2",
             padx=12,
             pady=7,
         ).grid(row=0, column=0, padx=(0, 8))
@@ -375,7 +508,13 @@ class SpineUpWindow:
             footer,
             text="Перерыв 1 мин",
             command=self.start_posture_break,
-            font=("Segoe UI", 12),
+            font=("Segoe UI", 10, "bold"),
+            bg="#1A2925",
+            fg="#E4F0EA",
+            activebackground="#2F5D50",
+            activeforeground="white",
+            relief="flat",
+            cursor="hand2",
             padx=12,
             pady=7,
         ).grid(row=0, column=3, padx=8)
@@ -383,24 +522,37 @@ class SpineUpWindow:
             footer,
             textvariable=self.pause_button_text,
             command=self.toggle_monitoring,
-            font=("Segoe UI", 12),
+            font=("Segoe UI", 10, "bold"),
+            bg="#117C72",
+            fg="white",
+            activebackground="#20A596",
+            activeforeground="white",
+            relief="flat",
+            cursor="hand2",
             padx=12,
             pady=7,
         )
         self.pause_button.grid(row=0, column=1, padx=8)
         tk.Button(
             footer,
-            text="Статистика за сегодня",
+            text="Статистика",
             command=self.show_statistics,
-            font=("Segoe UI", 12),
+            font=("Segoe UI", 10, "bold"),
+            bg="#1A2925",
+            fg="#E4F0EA",
+            activebackground="#2F5D50",
+            activeforeground="white",
+            relief="flat",
             padx=12,
             pady=7,
+            cursor="hand2",
         ).grid(row=0, column=2, padx=8)
         tk.Label(
             footer,
             textvariable=self.calibration_text,
+            bg="#101B19",
             font=("Segoe UI", 10),
-            fg="#4A5558",
+            fg="#9EB2A8",
             anchor="e",
         ).grid(row=0, column=4, sticky="e")
 
@@ -414,13 +566,13 @@ class SpineUpWindow:
             None.
         """
         styles = {
-            "normal": ("✅ Осанка в норме", "#218C55", "white"),
+            "normal": ("✅ Осанка в норме", "#117C72", "white"),
             "warning": ("⚠️ Начинаешь сутулиться", "#D99A00", "#171717"),
             "alert": ("🔴 Выпрямись!", "#C62828", "white"),
-            "paused": ("Мониторинг на паузе", "#697579", "white"),
-            "missing": ("Поза не распознана — сядьте перед камерой", "#53656B", "white"),
+            "paused": ("Мониторинг на паузе", "#33443F", "white"),
+            "missing": ("Поза не распознана — сядьте перед камерой", "#405751", "white"),
             "error": ("Камера недоступна", "#8E3434", "white"),
-            "calibration": ("Сначала выполните калибровку", "#53656B", "white"),
+            "calibration": ("Сначала выполните калибровку", "#405751", "white"),
             "calibrating": ("Калибровка по камере", "#176B78", "white"),
         }
         text, color, foreground = styles[state]
@@ -532,6 +684,7 @@ class SpineUpWindow:
             self.break_popup = BreakPopup(
                 self.root, self._next_break_exercise(), self._on_break_popup_finished
             )
+            self._log_monitoring_event("break_started")
         except Exception as error:
             self.break_popup = None
             print(f"[SpineUp] Не удалось показать перерыв: {error}")
@@ -548,9 +701,10 @@ class SpineUpWindow:
         if action == "done":
             self._sitting_elapsed = 0.0
             self._break_snooze_until = None
+            self._log_monitoring_event("break_completed")
             try:
                 self.database.record_break(datetime.now().astimezone())
-            except Exception as error:
+            except sqlite3.Error as error:
                 print(f"[SpineUp] Не удалось сохранить перерыв: {error}")
         else:
             self._break_snooze_until = now + BREAK_SNOOZE_SECONDS
@@ -800,6 +954,7 @@ class SpineUpWindow:
             self._set_status("paused")
             return
 
+        self._log_monitoring_frame(self.latest_posture_bad)
         now = datetime.now().astimezone()
         update = self.alert_manager.update(
             self.latest_deviation,
@@ -865,6 +1020,7 @@ class SpineUpWindow:
         self.deviation_text.set("Отклонение: 0°")
         self.timer_text.set("Длительность: --")
         self.monitoring = True
+        self._start_monitoring_session()
         self.latest_analysis_time = 0.0
         self._update_calibration_label()
         self._update_pause_button()
@@ -942,10 +1098,13 @@ class SpineUpWindow:
         """
         if update.episode_started is not None:
             self.episode_id = self.database.start_episode(update.episode_started)
+        if update.episode_ended is not None:
+            self._log_monitoring_event("posture_corrected")
         if update.episode_ended is not None and self.episode_id is not None:
             self.database.end_episode(self.episode_id, update.episode_ended)
             self.episode_id = None
         if update.notification:
+            self._log_monitoring_event("slouch_alert")
             try:
                 notification.notify(
                     title=APP_NAME,
@@ -1108,6 +1267,7 @@ class SpineUpWindow:
         update = self.alert_manager.reset(datetime.now().astimezone())
         self._apply_alert_update(update)
         self.monitoring = False
+        self._end_monitoring_session()
         self.calibration_mode = True
         self.calibration_in_progress = False
         self.calibration_countdown_deadline = None
@@ -1135,6 +1295,10 @@ class SpineUpWindow:
             self.calibration_retry_until = None
             self.calibration_countdown_deadline = None
             self.monitoring = self.calibration is not None
+            if self.monitoring:
+                self._start_monitoring_session()
+            else:
+                self._end_monitoring_session()
             self._update_pause_button()
             self._set_status("normal" if self.monitoring else "calibration")
             return
@@ -1149,63 +1313,72 @@ class SpineUpWindow:
             update = self.alert_manager.reset(datetime.now().astimezone())
             self._apply_alert_update(update)
             self.monitoring = False
+            self._end_monitoring_session()
             self._set_status("paused")
         else:
             self.monitoring = True
+            self._start_monitoring_session()
             self.latest_analysis_time = 0.0
             self._set_status("normal")
         self._update_pause_button()
     def start_posture_break(self) -> None:
-            """Open the 1-minute posture exercises window."""
-            if self.break_window is not None:
-                return
-            self.break_window = BreakWindow(self.root, EXERCISES, self._on_break_finished)
+        """Open the 1-minute posture exercises window."""
+        if self.break_window is not None:
+            return
+        self._log_monitoring_event("break_started")
+        self.break_window = BreakWindow(self.root, EXERCISES, self._on_break_finished)
     
     def _on_break_finished(self, completed: bool) -> None:
-            """Called when the break window closes."""
-            self.break_window = None
-            if completed:
+        """Called when the break window closes."""
+        self.break_window = None
+        if completed:
+            self._log_monitoring_event("break_completed")
+            try:
                 self.database.record_break(datetime.now().astimezone())
+            except sqlite3.Error as error:
+                print(f"[SpineUp] Не удалось сохранить завершённый перерыв: {error}")
 
     def show_statistics(self) -> None:
-        """Open a window with today's good-posture percentage and episodes.
+        """Open the local weekly statistics dashboard."""
+        if (
+            self._statistics_window is not None
+            and self._statistics_window.window.winfo_exists()
+        ):
+            self._statistics_window.window.deiconify()
+            self._statistics_window.window.lift()
+            self._statistics_window.refresh()
+            return
+        self._statistics_window = StatisticsWindow(
+            self.root, self.storage, self.load_demo_data
+        )
 
-        Returns:
-            None.
-        """
-        poor_percent = self.database.daily_poor_posture_percent()
-        episodes = self.database.daily_episodes()
-        window = tk.Toplevel(self.root)
-        window.title("Статистика за сегодня")
-        window.geometry("520x380")
-        window.minsize(420, 280)
-        window.transient(self.root)
-        window.columnconfigure(0, weight=1)
-        window.rowconfigure(2, weight=1)
+    def load_demo_data(self) -> int:
+        """Fill the dashboard with sample sessions without replacing user data."""
+        if self.storage is None:
+            raise RuntimeError("Local statistics storage is unavailable.")
+        added = load_demo_data(self.storage)
+        print(f"[SpineUp] Добавлено демо-сессий: {added}")
+        return added
 
-        good_percent = max(0.0, 100.0 - poor_percent)
-        tk.Label(
-            window,
-            text=f"Хорошая осанка сегодня: {good_percent:.1f}%",
-            font=("Segoe UI", 18, "bold"),
-            pady=16,
-        ).grid(row=0, column=0, sticky="w", padx=18)
-        tk.Label(
-            window,
-            text=f"Эпизодов сутулости: {len(episodes)}",
-            font=("Segoe UI", 12),
-        ).grid(row=1, column=0, sticky="w", padx=18, pady=(0, 8))
-
-        episode_list = tk.Listbox(window, font=("Segoe UI", 11), activestyle="none")
-        episode_list.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
-        if not episodes:
-            episode_list.insert(tk.END, "Сегодня эпизодов не зафиксировано.")
-        for started_at, ended_at in episodes:
-            end_label = ended_at.strftime("%H:%M:%S") if ended_at else "сейчас"
-            episode_list.insert(
-                tk.END,
-                f"{started_at.strftime('%H:%M:%S')} — {end_label}",
+    def _load_demo_data_from_menu(self) -> None:
+        try:
+            added = self.load_demo_data()
+        except (OSError, sqlite3.Error, RuntimeError, ValueError) as error:
+            print(f"[SpineUp] Не удалось загрузить демо-данные: {error}")
+            messagebox.showerror(
+                APP_NAME,
+                f"Не удалось загрузить демо-данные:\n{error}",
+                parent=self.root,
             )
+            return
+        if (
+            self._statistics_window is not None
+            and self._statistics_window.window.winfo_exists()
+        ):
+            self._statistics_window.refresh()
+        messagebox.showinfo(
+            APP_NAME, f"Добавлено демо-сессий: {added}", parent=self.root
+        )
 
     def close(self) -> None:
         """Stop Tk callbacks and release camera, detector, and database resources.
@@ -1227,7 +1400,18 @@ class SpineUpWindow:
             worker.join(timeout=3.0)
         update = self.alert_manager.reset(datetime.now().astimezone())
         self._apply_alert_update(update)
+        self._end_monitoring_session()
+        if self._tray_icon is not None:
+            try:
+                self._tray_icon.stop()
+            except Exception as error:
+                print(f"[SpineUp] Не удалось закрыть значок в трее: {error}")
         self.detector.close()
         self.database.close()
+        if self.storage is not None:
+            try:
+                self.storage.close()
+            except (OSError, sqlite3.Error) as error:
+                print(f"[SpineUp] Не удалось закрыть SQLite-хранилище: {error}")
         self.root.destroy()
     

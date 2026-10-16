@@ -3,6 +3,7 @@
 import ctypes
 import msvcrt
 import os
+import sqlite3
 
 if os.name == "nt":
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("spineup.app")
@@ -11,6 +12,7 @@ from calibration import load_calibration
 from config import CAMERA_INDEX, DATA_DIR, DATABASE_PATH, MODEL_PATH, resource_path
 from database import PostureDatabase
 from pose_detector import PoseDetector, probe_camera
+from storage import SessionStorage
 from ui import SpineUpWindow
 from PIL import Image, ImageTk, ImageSequence
 import tkinter as tk
@@ -67,7 +69,15 @@ def main() -> int:
     database = PostureDatabase(DATABASE_PATH)
     database.close_stale_episodes()
     print(f"[SpineUp] История хранится локально: {DATABASE_PATH}")
-    application = SpineUpWindow(detector, database, calibration, CAMERA_INDEX)
+    try:
+        storage = SessionStorage()
+        print(f"[SpineUp] Статистика хранится локально: {storage.database_path}")
+    except (OSError, sqlite3.Error) as error:
+        storage = None
+        print(f"[SpineUp] Не удалось инициализировать статистику: {error}")
+    application = SpineUpWindow(
+        detector, database, calibration, CAMERA_INDEX, storage=storage
+    )
     application.run()
     return 0
 def show_gif(path, label):
@@ -90,4 +100,3 @@ def show_gif(path, label):
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

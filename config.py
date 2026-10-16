@@ -1,12 +1,16 @@
 """Application settings and local data paths for SpineUp."""
 
 from pathlib import Path
+import os
 import sys
 
 
 APP_NAME = "SpineUp"
 __version__ = "0.1.0"
 PROJECT_DIR = Path(__file__).resolve().parent
+APP_DATA_DIR = Path(
+    os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming"
+) / APP_NAME
 
 
 def resource_path(relative_path: str | Path) -> Path:
@@ -22,6 +26,7 @@ MODEL_PATH = resource_path("models/pose_landmarker_lite.task")
 DATA_DIR = Path.home() / ".spineup"
 CALIBRATION_PATH = DATA_DIR / "calibration.json"
 DATABASE_PATH = DATA_DIR / "spineup.sqlite3"
+SESSION_DATABASE_PATH = APP_DATA_DIR / "spineup.db"
 
 CAMERA_INDEX = 0
 SAMPLE_INTERVAL_SECONDS = 1.0

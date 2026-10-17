@@ -81,7 +81,7 @@ The existing calibration file and episode history remain in `%USERPROFILE%\.spin
 
 | Name | Role |
 | --- | --- |
-| `[Team member name]` | `[Project lead / product]` |
-| `[Team member name]` | `[Computer vision / posture analysis]` |
-| `[Team member name]` | `[Desktop UI / user experience]` |
-| `[Team member name]` | `[Storage / testing / packaging]` |
+| `Altynbek` | `[Project lead / product]` |
+| `Altynbek` | `[Computer vision / posture analysis]` |
+| `Altynbek` | `[Desktop UI / user experience]` |
+| `Inkar` | `[Storage / testing / packaging]` |

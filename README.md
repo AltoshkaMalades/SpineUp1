@@ -11,16 +11,6 @@ SpineUp is a privacy-first Windows desktop posture companion. It uses a webcam t
 - Optional demo data for presenting a populated statistics dashboard.
 - Optional launch-at-sign-in setting.
 
-## Screenshots
-
-Replace these placeholders with project screenshots before publishing:
-
-![Main window screenshot placeholder](screenshots/main-window.png)
-
-![Statistics dashboard screenshot placeholder](screenshots/statistics.png)
-
-![Exercise break screenshot placeholder](screenshots/exercise-break.png)
-
 ## Run from source
 
 Requirements: Windows, Python 3.10 or newer, and a webcam.

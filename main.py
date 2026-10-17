@@ -9,13 +9,11 @@ if os.name == "nt":
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("spineup.app")
 
 from calibration import load_calibration
-from config import CAMERA_INDEX, DATA_DIR, DATABASE_PATH, MODEL_PATH, resource_path
+from config import CAMERA_INDEX, DATA_DIR, DATABASE_PATH, MODEL_PATH
 from database import PostureDatabase
 from pose_detector import PoseDetector, probe_camera
 from storage import SessionStorage
 from ui import SpineUpWindow
-from PIL import Image, ImageTk, ImageSequence
-import tkinter as tk
 
 
 _instance_lock = None
@@ -65,7 +63,11 @@ def main() -> int:
         print("[SpineUp] Приложение останется в трее; камеру можно проверить повторно после запуска.")
 
     calibration = load_calibration()
-    print("[SpineUp] Статус калибровки: готова." if calibration else "[SpineUp] Статус калибровки: не выполнена.")
+    print(
+        "[SpineUp] Статус калибровки: готова."
+        if calibration
+        else "[SpineUp] Статус калибровки: не выполнена."
+    )
     database = PostureDatabase(DATABASE_PATH)
     database.close_stale_episodes()
     print(f"[SpineUp] История хранится локально: {DATABASE_PATH}")
@@ -80,22 +82,6 @@ def main() -> int:
     )
     application.run()
     return 0
-def show_gif(path, label):
-    gif = Image.open(resource_path(path))
-
-    frames = [
-        ImageTk.PhotoImage(frame.copy().convert("RGBA"))
-        for frame in ImageSequence.Iterator(gif)
-    ]
-
-    def animate(index=0):
-        label.config(image=frames[index])
-        label.image = frames[index]
-
-        label.after(100, animate, (index + 1) % len(frames))
-
-    animate()
-    
 
 
 if __name__ == "__main__":

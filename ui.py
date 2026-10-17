@@ -265,10 +265,9 @@ class SpineUpWindow:
         """
         self.root.mainloop()
 
-    def _build_app_menu(self) -> None:
-        """Initialize the launch-at-startup setting for the Settings panel."""
+    def _initialize_settings(self) -> None:
+        """Initialize settings shared by the window controls."""
         self._autostart_var = tk.BooleanVar(value=self._read_autostart_enabled())
-        self._settings_window = None
 
     def _start_tray_icon(self) -> None:
         """Expose monitoring controls and statistics in the Windows tray."""
@@ -399,7 +398,7 @@ class SpineUpWindow:
         Returns:
             None.
         """
-        self._build_app_menu()
+        self._initialize_settings()
         title_bar = create_title_bar(
             self.root,
             "SpineUp",
@@ -593,7 +592,7 @@ class SpineUpWindow:
         ).pack(fill="x", pady=5)
         for label, command in (
             ("Проверить напоминание о перерыве", self.test_break_popup),
-            ("Загрузить демо-данные", self._load_demo_data_from_menu),
+            ("Загрузить демо-данные", self._load_demo_data_from_settings),
         ):
             tk.Button(
                 panel,
@@ -1384,13 +1383,14 @@ class SpineUpWindow:
             self.latest_analysis_time = 0.0
             self._set_status("normal")
         self._update_pause_button()
+
     def start_posture_break(self) -> None:
         """Open the 1-minute posture exercises window."""
         if self.break_window is not None:
             return
         self._log_monitoring_event("break_started")
         self.break_window = BreakWindow(self.root, EXERCISES, self._on_break_finished)
-    
+
     def _on_break_finished(self, completed: bool) -> None:
         """Called when the break window closes."""
         self.break_window = None
@@ -1423,7 +1423,7 @@ class SpineUpWindow:
         print(f"[SpineUp] Добавлено демо-сессий: {added}")
         return added
 
-    def _load_demo_data_from_menu(self) -> None:
+    def _load_demo_data_from_settings(self) -> None:
         try:
             added = self.load_demo_data()
         except (OSError, sqlite3.Error, RuntimeError, ValueError) as error:
@@ -1476,4 +1476,3 @@ class SpineUpWindow:
             except (OSError, sqlite3.Error) as error:
                 print(f"[SpineUp] Не удалось закрыть SQLite-хранилище: {error}")
         self.root.destroy()
-    

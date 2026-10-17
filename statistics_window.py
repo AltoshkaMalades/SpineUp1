@@ -3,22 +3,24 @@
 import logging
 import sqlite3
 import tkinter as tk
-from tkinter import messagebox
 from datetime import datetime
 from typing import Callable
 
+from config import THEME
 from storage import SessionStorage
+from window_chrome import create_title_bar, make_frameless, show_themed_message
 
 
 logger = logging.getLogger(__name__)
-BACKGROUND = "#101B19"
-SURFACE = "#1A2925"
-SURFACE_RAISED = "#21342F"
-TEXT = "#E4F0EA"
-MUTED = "#9EB2A8"
-ACCENT = "#64D6BC"
-GRID = "#344A43"
-FONT = "Segoe UI"
+BACKGROUND = THEME["background"]
+SURFACE = THEME["surface"]
+SURFACE_RAISED = THEME["surface_hover"]
+TEXT = THEME["text"]
+MUTED = THEME["muted"]
+ACCENT = THEME["accent"]
+GRID = THEME["border"]
+FONT = THEME["font"]
+CHART_WARNING_THRESHOLD_PERCENT = 15.0
 
 
 class StatisticsWindow:
@@ -36,13 +38,19 @@ class StatisticsWindow:
         self.window.title("SpineUp · Statistics")
         self.window.geometry("920x720")
         self.window.minsize(760, 600)
-        self.window.configure(bg=BACKGROUND)
+        self.window.configure(bg=GRID)
+        make_frameless(self.window)
         self.window.transient(parent)
         self.window.columnconfigure(0, weight=1)
-        self.window.rowconfigure(0, weight=1)
+        self.window.rowconfigure(1, weight=1)
+        create_title_bar(
+            self.window,
+            "SpineUp · Статистика",
+            on_close=self.window.destroy,
+        ).grid(row=0, column=0, sticky="ew", padx=1, pady=(1, 0))
 
-        content = tk.Frame(self.window, bg=BACKGROUND, padx=26, pady=22)
-        content.grid(row=0, column=0, rowspan=3, sticky="nsew")
+        content = tk.Frame(self.window, bg=BACKGROUND, padx=22, pady=18)
+        content.grid(row=1, column=0, sticky="nsew", padx=1, pady=(0, 1))
         content.columnconfigure(0, weight=1)
         content.rowconfigure(3, weight=1)
 
@@ -191,10 +199,11 @@ class StatisticsWindow:
         except (sqlite3.Error, OSError) as error:
             logger.exception("Could not load SpineUp statistics")
             self.data_status.configure(text="Не удалось загрузить статистику")
-            messagebox.showerror(
+            show_themed_message(
+                self.window,
                 "SpineUp",
                 f"Не удалось прочитать локальную статистику:\n{error}",
-                parent=self.window,
+                "error",
             )
             return
 
@@ -204,7 +213,7 @@ class StatisticsWindow:
             text=f"{summary['slouch_percent_this_week']:.1f}%"
         )
         self.card_values[1].configure(
-            text=change_text, fg=ACCENT if change <= 0 else "#F0B86E"
+            text=change_text, fg=THEME["good_text"] if change <= 0 else THEME["coral_text"]
         )
         self.card_values[2].configure(text=str(summary["completed_breaks"]))
         self.card_values[3].configure(text=f"{summary['streak_days']} дн.")
@@ -235,10 +244,11 @@ class StatisticsWindow:
             added = self.on_load_demo()
         except (sqlite3.Error, OSError, RuntimeError, ValueError) as error:
             logger.exception("Could not load SpineUp demo data")
-            messagebox.showerror(
+            show_themed_message(
+                self.window,
                 "SpineUp",
                 f"Не удалось загрузить демо-данные:\n{error}",
-                parent=self.window,
+                "error",
             )
             return
         self.data_status.configure(text=f"Добавлено демо-сессий: {added}")
@@ -279,7 +289,11 @@ class StatisticsWindow:
                     bottom - bar_height,
                     x_center + bar_width / 2,
                     bottom,
-                    fill=ACCENT,
+                    fill=(
+                        THEME["coral_text"]
+                        if float(percent) >= CHART_WARNING_THRESHOLD_PERCENT
+                        else ACCENT
+                    ),
                     outline="",
                 )
             day = item["date"]

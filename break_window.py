@@ -5,16 +5,17 @@ from typing import Callable, Sequence
 
 from PIL import Image, ImageSequence, ImageTk
 
-from config import BREAK_DURATION_SECONDS, resource_path
+from config import BREAK_DURATION_SECONDS, THEME, resource_path
 from exercises import Exercise
+from window_chrome import create_title_bar, make_frameless
 
 GIF_DELAY_MS = 300  # чем больше число, тем медленнее гифка
-BACKGROUND = "#101B19"
-SURFACE = "#1A2925"
-TEXT = "#E4F0EA"
-MUTED = "#9EB2A8"
-ACCENT = "#64D6BC"
-FONT = "Segoe UI"
+BACKGROUND = THEME["background"]
+SURFACE = THEME["surface"]
+TEXT = THEME["text"]
+MUTED = THEME["muted"]
+ACCENT = THEME["accent"]
+FONT = THEME["font"]
 
 
 def _load_gif_frames(path: str, size: tuple[int, int]) -> list[ImageTk.PhotoImage]:
@@ -59,13 +60,19 @@ class BreakWindow:
 
         self.window = tk.Toplevel(parent)
         self.window.title("Перерыв для осанки")
-        self.window.geometry("520x360")
-        self.window.configure(bg=BACKGROUND)
-        self.window.attributes("-topmost", True)
+        self.window.geometry("560x570")
+        self.window.minsize(500, 520)
+        self.window.configure(bg=THEME["border"])
+        make_frameless(self.window)
         self.window.protocol("WM_DELETE_WINDOW", self.cancel)
 
+        create_title_bar(
+            self.window, "Перерыв для осанки", on_close=self.cancel
+        ).pack(fill="x", padx=1, pady=(1, 0))
+        content = tk.Frame(self.window, bg=BACKGROUND, padx=18, pady=10)
+        content.pack(fill="both", expand=True, padx=1, pady=(0, 1))
         self.countdown_label = tk.Label(
-            self.window,
+            content,
             font=(FONT, 40, "bold"),
             pady=8,
             bg=BACKGROUND,
@@ -73,11 +80,11 @@ class BreakWindow:
         )
         self.countdown_label.pack()
         self.title_label = tk.Label(
-            self.window, font=(FONT, 16, "bold"), bg=BACKGROUND, fg=TEXT
+            content, font=(FONT, 16, "bold"), bg=BACKGROUND, fg=TEXT
         )
         self.title_label.pack()
         self.description_label = tk.Label(
-            self.window,
+            content,
             font=(FONT, 11),
             wraplength=460,
             justify="center",
@@ -87,20 +94,24 @@ class BreakWindow:
         )
         self.description_label.pack()
         self.step_label = tk.Label(
-            self.window, font=(FONT, 10), fg=MUTED, bg=BACKGROUND
+            content, font=(FONT, 10), fg=MUTED, bg=BACKGROUND
         )
         self.step_label.pack()
-        self.animation_label = tk.Label(self.window, bg=BACKGROUND)
+        self.progress = tk.Canvas(
+            content, height=10, bg=THEME["surface"], highlightthickness=0, bd=0
+        )
+        self.progress.pack(fill="x", pady=(5, 3))
+        self.animation_label = tk.Label(content, bg=BACKGROUND)
         self.animation_label.pack(pady=10)
 
         tk.Button(
-            self.window, text="Закончить раньше", command=self.cancel,
+            content, text="Закончить раньше", command=self.cancel,
             font=(FONT, 10, "bold"),
             padx=10,
             pady=7,
             bg=SURFACE,
             fg=TEXT,
-            activebackground="#2F5D50",
+            activebackground=THEME["surface_hover"],
             activeforeground=TEXT,
             relief="flat",
             cursor="hand2",
@@ -144,6 +155,16 @@ class BreakWindow:
     def _render(self) -> None:
         index, item = self._current_exercise()
         self.countdown_label.configure(text=f"{self.remaining} с")
+        self.progress.delete("all")
+        width = max(self.progress.winfo_width(), 360)
+        self.progress.create_rectangle(
+            0,
+            0,
+            width * (self.total_seconds - self.remaining) / max(self.total_seconds, 1),
+            10,
+            fill=ACCENT,
+            outline="",
+        )
         self.title_label.configure(text=item.name)
         self.description_label.configure(text=item.description)
         self.step_label.configure(text=f"Упражнение {index + 1} из {len(self.exercises)}")
@@ -193,14 +214,20 @@ class BreakPopup:
         self.window = tk.Toplevel(parent)
         self.window.title("SpineUp")
         self.window.resizable(False, False)
-        self.window.configure(bg=BACKGROUND)
+        self.window.configure(bg=THEME["border"])
+        make_frameless(self.window)
         self.window.attributes("-topmost", True)
         self.window.focusmodel("passive")
         self.window.protocol("WM_DELETE_WINDOW", self.later)
 
+        create_title_bar(
+            self.window, "SpineUp", on_close=self.later, controls=False
+        ).pack(fill="x", padx=1, pady=(1, 0))
+        content = tk.Frame(self.window, bg=BACKGROUND)
+        content.pack(fill="both", expand=True, padx=1, pady=(0, 1))
         tk.Label(
-            self.window,
-            text="You've been sitting for 60 minutes. Take a 1-minute posture break.",
+            content,
+            text="Пора размяться — сделайте минутный перерыв.",
             font=("Segoe UI", 11, "bold"),
             wraplength=320,
             justify="center",
@@ -210,7 +237,7 @@ class BreakPopup:
             fg=TEXT,
         ).pack(fill="x")
         tk.Label(
-            self.window,
+            content,
             text=exercise.name,
             font=("Segoe UI", 11),
             wraplength=320,
@@ -219,33 +246,33 @@ class BreakPopup:
             bg=BACKGROUND,
             fg=MUTED,
         ).pack(fill="x")
-        self.animation_label = tk.Label(self.window, bg=BACKGROUND)
+        self.animation_label = tk.Label(content, bg=BACKGROUND)
         self.animation_label.pack(pady=(4, 0))
         self.countdown_label = tk.Label(
-            self.window,
-            text="60 seconds",
+            content,
+            text="60 с",
             font=(FONT, 18, "bold"),
             bg=BACKGROUND,
             fg=ACCENT,
         )
         self.countdown_label.pack(pady=4)
 
-        buttons = tk.Frame(self.window, bg=BACKGROUND)
+        buttons = tk.Frame(content, bg=BACKGROUND)
         buttons.pack(pady=(0, 10))
         button_style = {
             "bg": SURFACE,
             "fg": TEXT,
-            "activebackground": "#2F5D50",
+            "activebackground": THEME["surface_hover"],
             "activeforeground": TEXT,
             "relief": "flat",
             "cursor": "hand2",
             "font": (FONT, 9, "bold"),
             "pady": 5,
         }
-        tk.Button(buttons, text="Done", command=self.done, width=10, **button_style).pack(
+        tk.Button(buttons, text="Готово", command=self.done, width=10, **button_style).pack(
             side="left", padx=6
         )
-        tk.Button(buttons, text="Later", command=self.later, width=10, **button_style).pack(
+        tk.Button(buttons, text="Позже", command=self.later, width=10, **button_style).pack(
             side="left", padx=6
         )
 
@@ -272,7 +299,7 @@ class BreakPopup:
         if self.remaining <= 0:
             self._finish("done")
             return
-        self.countdown_label.configure(text=f"{self.remaining} seconds")
+        self.countdown_label.configure(text=f"{self.remaining} с")
         self._timer_after_id = self.window.after(1000, self._tick)
 
     def done(self) -> None:

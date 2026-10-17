@@ -7,7 +7,6 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 import tkinter as tk
-from tkinter import messagebox
 from typing import Callable, Sequence
 
 import cv2
@@ -35,6 +34,7 @@ from config import (
     SAMPLE_INTERVAL_SECONDS,
     BREAK_SNOOZE_SECONDS,
     SITTING_BREAK_SECONDS,
+    THEME,
     __version__,
 )
 from database import PostureDatabase
@@ -49,6 +49,7 @@ from posture_analyzer import (
     posture_exceeds_threshold,
     posture_metric_deviations,
 )
+from window_chrome import create_title_bar, make_frameless, show_themed_message
 
 
 SKELETON_CONNECTIONS: tuple[tuple[int, int], ...] = (
@@ -125,9 +126,16 @@ def draw_pose_skeleton(
             first_point = points.get(first_index)
             second_point = points.get(second_index)
             if first_point is not None and second_point is not None:
-                cv2.line(frame, first_point, second_point, (60, 220, 110), 3, cv2.LINE_AA)
+                cv2.line(
+                    frame,
+                    first_point,
+                    second_point,
+                    THEME["skeleton_line_bgr"],
+                    3,
+                    cv2.LINE_AA,
+                )
         for point in points.values():
-            cv2.circle(frame, point, 4, (40, 230, 255), -1, cv2.LINE_AA)
+            cv2.circle(frame, point, 4, THEME["skeleton_point_bgr"], -1, cv2.LINE_AA)
 
     for line_index, text in enumerate(debug_lines):
         y_position = 22 + line_index * 18
@@ -137,7 +145,7 @@ def draw_pose_skeleton(
             (10, y_position),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.45,
-            (255, 255, 255),
+            THEME["debug_overlay_bgr"],
             1,
             cv2.LINE_AA,
         )
@@ -172,15 +180,19 @@ class SpineUpWindow:
         self.calibration = calibration
         self.camera_index = camera_index
         self.root = tk.Tk()
-        self.root.configure(bg="#101B19")
+        self.root.configure(bg=THEME["border"])
         self.root.title(f"{APP_NAME} v{__version__}")
+        make_frameless(self.root, taskbar=True)
         self._window_icon = tk.PhotoImage(file=str(ICON_PNG_PATH))
+        self._title_icon = self._window_icon.subsample(
+            max((self._window_icon.width() + 27) // 28, 1),
+            max((self._window_icon.height() + 27) // 28, 1),
+        )
         self.root.iconbitmap(default=str(ICON_ICO_PATH))
         self.root.iconphoto(True, self._window_icon)
         self.root.geometry("1080x760")
-        self.root.minsize(760, 560)
+        self.root.minsize(820, 620)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
-        self._build_app_menu()
 
         self.alert_manager = AlertManager(
             deviation_threshold=POSTURE_DEVIATION_THRESHOLD_DEGREES
@@ -224,6 +236,8 @@ class SpineUpWindow:
         self.calibration_attempt_id = 0
         self.analysis_results: queue.Queue[AnalysisResult] = queue.Queue(maxsize=2)
         self.analysis_thread: threading.Thread | None = None
+        self._settings_window: tk.Toplevel | None = None
+        self.debug_info_var = tk.BooleanVar(value=False)
 
         self.status_text = tk.StringVar()
         self.deviation_text = tk.StringVar(value="Отклонение: --")
@@ -231,11 +245,12 @@ class SpineUpWindow:
         self.calibration_text = tk.StringVar()
         self.pause_button_text = tk.StringVar()
         self._build_widgets()
+        self._update_pause_button()
         self._set_status("paused" if not self.monitoring else "normal")
         if self.monitoring:
             self._start_monitoring_session()
         self._update_calibration_label()
-        self._update_pause_button()
+        self.root.after_idle(lambda: self.root.update_idletasks())
         self._start_tray_icon()
         self.root.after(0, self._video_tick)
         self.root.after(1000, self._check_break_reminder)
@@ -251,42 +266,9 @@ class SpineUpWindow:
         self.root.mainloop()
 
     def _build_app_menu(self) -> None:
-        """Add the startup option to the window used by the main entry point."""
-        menu_bar = tk.Menu(
-            self.root,
-            tearoff=False,
-            bg="#1A2925",
-            fg="#E4F0EA",
-            activebackground="#2F5D50",
-            activeforeground="white",
-        )
-        settings_menu = tk.Menu(
-            menu_bar,
-            tearoff=False,
-            bg="#1A2925",
-            fg="#E4F0EA",
-            activebackground="#2F5D50",
-            activeforeground="white",
-        )
+        """Initialize the launch-at-startup setting for the Settings panel."""
         self._autostart_var = tk.BooleanVar(value=self._read_autostart_enabled())
-        settings_menu.add_checkbutton(
-            label="Launch at startup",
-            variable=self._autostart_var,
-            command=self._toggle_autostart,
-        )
-        settings_menu.add_command(
-            label="Test break popup", command=self.test_break_popup
-        )
-        settings_menu.add_command(
-            label="Load demo data", command=self._load_demo_data_from_menu
-        )
-        settings_menu.add_separator()
-        settings_menu.add_command(
-            label=f"{APP_NAME} v{__version__}", state="disabled"
-        )
-        menu_bar.add_cascade(label="Settings", menu=settings_menu)
-        menu_bar.add_command(label="Statistics", command=self.show_statistics)
-        self.root.config(menu=menu_bar)
+        self._settings_window = None
 
     def _start_tray_icon(self) -> None:
         """Expose monitoring controls and statistics in the Windows tray."""
@@ -340,7 +322,7 @@ class SpineUpWindow:
 
     def _show_main_window(self) -> None:
         self.root.deiconify()
-        self.root.lift()
+        self.root.after_idle(lambda: self.root.focus_force())
 
     def _start_monitoring_session(self) -> None:
         storage = getattr(self, "storage", None)
@@ -417,50 +399,109 @@ class SpineUpWindow:
         Returns:
             None.
         """
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=1)
+        self._build_app_menu()
+        title_bar = create_title_bar(
+            self.root,
+            "SpineUp",
+            self._title_icon,
+            on_close=self.close,
+        )
+        title_bar.pack(fill="x", padx=1, pady=(1, 0))
+        self.app_frame = tk.Frame(self.root, bg=THEME["background"])
+        self.app_frame.pack(fill="both", expand=True, padx=1, pady=(0, 1))
+        self.app_frame.columnconfigure(0, weight=1)
+        self.app_frame.rowconfigure(2, weight=1)
 
-        status_panel = tk.Frame(self.root, bg="#117C72", padx=18, pady=14)
-        status_panel.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 10))
+        actions = tk.Frame(self.app_frame, bg=THEME["background"], padx=16, pady=12)
+        actions.grid(row=0, column=0, sticky="ew")
+        for column in range(5):
+            actions.columnconfigure(column, weight=1, uniform="action")
+        button_specs = (
+            ("Калибровка", self.calibrate, False),
+            ("Пауза мониторинга", self.toggle_monitoring, True),
+            ("Статистика", self.show_statistics, False),
+            ("Перерыв 1 мин", self.start_posture_break, False),
+            ("Настройки", self.show_settings, False),
+        )
+        self.pause_button = None
+        for column, (text, command, primary) in enumerate(button_specs):
+            options = {
+                "text": text,
+                "command": command,
+                "font": (THEME["font"], 11, "bold"),
+                "bg": THEME["accent"] if primary else THEME["surface"],
+                "fg": THEME["background"] if primary else THEME["text"],
+                "activebackground": THEME["accent_hover"] if primary else THEME["surface_hover"],
+                "activeforeground": THEME["background"] if primary else THEME["text"],
+                "relief": "flat",
+                "borderwidth": 0,
+                "cursor": "hand2",
+                "padx": 11,
+                "pady": 9,
+            }
+            button = tk.Button(actions, **options)
+            button.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 8, 0))
+            normal_bg = options["bg"]
+            hover_bg = THEME["accent_hover"] if primary else THEME["surface_hover"]
+            button.bind("<Enter>", lambda _event, widget=button, color=hover_bg: widget.configure(bg=color))
+            button.bind("<Leave>", lambda _event, widget=button, color=normal_bg: widget.configure(bg=color))
+            if column == 1:
+                self.pause_button = button
+                button.configure(textvariable=self.pause_button_text)
+
+        status_panel = tk.Frame(
+            self.app_frame,
+            bg=THEME["good"],
+            highlightbackground=THEME["border"],
+            highlightthickness=1,
+            padx=18,
+            pady=14,
+        )
+        status_panel.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 10))
         status_panel.columnconfigure(0, weight=1)
         self.status_label = tk.Label(
             status_panel,
             textvariable=self.status_text,
-            bg=status_panel["bg"],
-            fg="white",
-            font=("Segoe UI", 20, "bold"),
+            bg=THEME["good"],
+            fg=THEME["good_text"],
+            font=(THEME["font"], 20, "bold"),
             anchor="w",
         )
         self.status_label.grid(row=0, column=0, sticky="ew")
         self.deviation_label = tk.Label(
             status_panel,
             textvariable=self.deviation_text,
-            bg=status_panel["bg"],
-            fg="white",
-            font=("Segoe UI", 15),
+            bg=THEME["good"],
+            fg=THEME["good_text"],
+            font=(THEME["font"], 12),
             anchor="w",
         )
         self.deviation_label.grid(row=1, column=0, sticky="w", pady=(5, 0))
         self.timer_label = tk.Label(
             status_panel,
             textvariable=self.timer_text,
-            bg=status_panel["bg"],
-            fg="white",
-            font=("Segoe UI", 13),
+            bg=THEME["good"],
+            fg=THEME["muted"],
+            font=(THEME["font"], 11),
             anchor="e",
         )
         self.timer_label.grid(row=1, column=1, sticky="e", padx=(12, 0), pady=(5, 0))
 
-        video_shell = tk.Frame(self.root, bg="#117C72", padx=7, pady=7)
-        video_shell.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 10))
+        video_shell = tk.Frame(
+            self.app_frame,
+            bg=THEME["border"],
+            padx=1,
+            pady=1,
+        )
+        video_shell.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 10))
         video_shell.rowconfigure(0, weight=1)
         video_shell.columnconfigure(0, weight=1)
         self.video_label = tk.Label(
             video_shell,
             text="Подключение к камере...",
-            bg="#0E1715",
-            fg="#DDEBE5",
-            font=("Segoe UI", 16),
+            bg=THEME["surface"],
+            fg=THEME["muted"],
+            font=(THEME["font"], 16),
         )
         self.video_label.grid(row=0, column=0, sticky="nsew")
         self.video_label.bind("<Configure>", self._on_video_resize)
@@ -469,9 +510,9 @@ class SpineUpWindow:
         self.calibration_banner = tk.Label(
             video_shell,
             textvariable=self.calibration_banner_text,
-            bg="#0E1715",
-            fg="#DDEBE5",
-            font=("Segoe UI", 17, "bold"),
+            bg=THEME["surface"],
+            fg=THEME["text"],
+            font=(THEME["font"], 17, "bold"),
             padx=14,
             pady=8,
             wraplength=720,
@@ -480,81 +521,99 @@ class SpineUpWindow:
         self.calibration_countdown = tk.Label(
             video_shell,
             textvariable=self.calibration_countdown_text,
-            bg="#0E1715",
-            fg="#DDEBE5",
-            font=("Segoe UI", 48, "bold"),
+            bg=THEME["surface"],
+            fg=THEME["accent"],
+            font=(THEME["font"], 48, "bold"),
             padx=18,
             pady=6,
         )
 
-        footer = tk.Frame(self.root, bg="#101B19", padx=16, pady=8)
-        footer.grid(row=2, column=0, sticky="ew")
-        footer.columnconfigure(4, weight=1)
-        tk.Button(
-            footer,
-            text="Калибровка",
-            command=self.calibrate,
-            font=("Segoe UI", 10, "bold"),
-            bg="#1A2925",
-            fg="#E4F0EA",
-            activebackground="#2F5D50",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            padx=12,
-            pady=7,
-        ).grid(row=0, column=0, padx=(0, 8))
-        tk.Button(
-            footer,
-            text="Перерыв 1 мин",
-            command=self.start_posture_break,
-            font=("Segoe UI", 10, "bold"),
-            bg="#1A2925",
-            fg="#E4F0EA",
-            activebackground="#2F5D50",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            padx=12,
-            pady=7,
-        ).grid(row=0, column=3, padx=8)
-        self.pause_button = tk.Button(
-            footer,
-            textvariable=self.pause_button_text,
-            command=self.toggle_monitoring,
-            font=("Segoe UI", 10, "bold"),
-            bg="#117C72",
-            fg="white",
-            activebackground="#20A596",
-            activeforeground="white",
-            relief="flat",
-            cursor="hand2",
-            padx=12,
-            pady=7,
-        )
-        self.pause_button.grid(row=0, column=1, padx=8)
-        tk.Button(
-            footer,
-            text="Статистика",
-            command=self.show_statistics,
-            font=("Segoe UI", 10, "bold"),
-            bg="#1A2925",
-            fg="#E4F0EA",
-            activebackground="#2F5D50",
-            activeforeground="white",
-            relief="flat",
-            padx=12,
-            pady=7,
-            cursor="hand2",
-        ).grid(row=0, column=2, padx=8)
+        footer = tk.Frame(self.app_frame, bg=THEME["background"], padx=16, pady=6)
+        footer.grid(row=3, column=0, sticky="ew")
+        footer.columnconfigure(0, weight=1)
         tk.Label(
             footer,
             textvariable=self.calibration_text,
-            bg="#101B19",
-            font=("Segoe UI", 10),
-            fg="#9EB2A8",
+            bg=THEME["background"],
+            font=(THEME["font"], 10),
+            fg=THEME["muted"],
             anchor="e",
-        ).grid(row=0, column=4, sticky="e")
+        ).grid(row=0, column=0, sticky="e")
+
+    def show_settings(self) -> None:
+        """Open the visual and startup settings panel."""
+        if self._settings_window is not None and self._settings_window.winfo_exists():
+            self._settings_window.deiconify()
+            self._settings_window.lift()
+            return
+        window = tk.Toplevel(self.root)
+        self._settings_window = window
+        window.title("Настройки SpineUp")
+        window.configure(bg=THEME["border"])
+        window.geometry("460x360")
+        window.transient(self.root)
+        make_frameless(window)
+        create_title_bar(
+            window, "Настройки", self._title_icon, window.destroy
+        ).pack(fill="x", padx=1, pady=(1, 0))
+        panel = tk.Frame(window, bg=THEME["background"], padx=16, pady=12)
+        panel.pack(fill="both", expand=True, padx=1, pady=(0, 1))
+        tk.Label(
+            panel,
+            text="Параметры приложения",
+            bg=THEME["background"],
+            fg=THEME["text"],
+            font=(THEME["font"], 15, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+        tk.Checkbutton(
+            panel,
+            text="Показывать отладочную информацию на видео",
+            variable=self.debug_info_var,
+            command=self._toggle_debug_info,
+            bg=THEME["background"],
+            fg=THEME["text"],
+            activebackground=THEME["background"],
+            activeforeground=THEME["text"],
+            selectcolor=THEME["surface"],
+            font=(THEME["font"], 10),
+            anchor="w",
+        ).pack(fill="x", pady=5)
+        tk.Checkbutton(
+            panel,
+            text="Запускать SpineUp вместе с Windows",
+            variable=self._autostart_var,
+            command=self._toggle_autostart,
+            bg=THEME["background"],
+            fg=THEME["text"],
+            activebackground=THEME["background"],
+            activeforeground=THEME["text"],
+            selectcolor=THEME["surface"],
+            font=(THEME["font"], 10),
+            anchor="w",
+        ).pack(fill="x", pady=5)
+        for label, command in (
+            ("Проверить напоминание о перерыве", self.test_break_popup),
+            ("Загрузить демо-данные", self._load_demo_data_from_menu),
+        ):
+            tk.Button(
+                panel,
+                text=label,
+                command=command,
+                bg=THEME["surface"],
+                fg=THEME["text"],
+                activebackground=THEME["surface_hover"],
+                activeforeground=THEME["text"],
+                relief="flat",
+                padx=12,
+                pady=8,
+                font=(THEME["font"], 10),
+                cursor="hand2",
+            ).pack(fill="x", pady=(8, 0))
+        window.protocol("WM_DELETE_WINDOW", window.destroy)
+
+    def _toggle_debug_info(self) -> None:
+        if self.last_frame is not None and self._preview_visible():
+            self._render_frame(self.last_frame.copy())
 
     def _set_status(self, state: str) -> None:
         """Set the large status label and high-visibility color frame.
@@ -566,21 +625,23 @@ class SpineUpWindow:
             None.
         """
         styles = {
-            "normal": ("✅ Осанка в норме", "#117C72", "white"),
-            "warning": ("⚠️ Начинаешь сутулиться", "#D99A00", "#171717"),
-            "alert": ("🔴 Выпрямись!", "#C62828", "white"),
-            "paused": ("Мониторинг на паузе", "#33443F", "white"),
-            "missing": ("Поза не распознана — сядьте перед камерой", "#405751", "white"),
-            "error": ("Камера недоступна", "#8E3434", "white"),
-            "calibration": ("Сначала выполните калибровку", "#405751", "white"),
-            "calibrating": ("Калибровка по камере", "#176B78", "white"),
+            "normal": ("✓ Отличная осанка", THEME["good"], THEME["good_text"], THEME["border"]),
+            "warning": ("Выпрямись!", THEME["coral"], THEME["coral_text"], THEME["coral_border"]),
+            "alert": ("Выпрямись!", THEME["coral"], THEME["coral_text"], THEME["coral_border"]),
+            "paused": ("Мониторинг на паузе", THEME["surface"], THEME["text"], THEME["border"]),
+            "missing": ("Поза не распознана — сядьте перед камерой", THEME["surface"], THEME["text"], THEME["border"]),
+            "error": ("Камера недоступна", THEME["surface"], THEME["text"], THEME["border"]),
+            "calibration": ("Сначала выполните калибровку", THEME["surface"], THEME["text"], THEME["border"]),
+            "calibrating": ("Калибровка по камере", THEME["surface"], THEME["text"], THEME["border"]),
         }
-        text, color, foreground = styles[state]
+        text, color, foreground, border = styles[state]
         self.status_text.set(text)
         self.status_label.configure(bg=color, fg=foreground)
         self.deviation_label.configure(bg=color, fg=foreground)
-        self.timer_label.configure(bg=color, fg=foreground)
-        self.video_shell.configure(bg=color)
+        self.timer_label.configure(bg=color, fg=THEME["muted"] if state == "normal" else foreground)
+        self.status_label.master.configure(bg=color, highlightbackground=border)
+        self.timer_label.configure(bg=color)
+        self.video_shell.configure(bg=THEME["coral_border"] if state in ("warning", "alert") else THEME["border"])
 
     def _update_calibration_label(self) -> None:
         """Show whether a personal camera baseline has been calibrated.
@@ -600,7 +661,7 @@ class SpineUpWindow:
             None.
         """
         self.pause_button_text.set(
-            "Пауза мониторинга" if self.monitoring else "Продолжить мониторинг"
+            "Пауза мониторинга" if self.monitoring else "Продолжить"
         )
 
     def _video_tick(self) -> None:
@@ -1158,7 +1219,9 @@ class SpineUpWindow:
         annotated = draw_pose_skeleton(
             frame,
             self.latest_landmarks,
-            self._debug_overlay_lines(frame.shape[1], frame.shape[0]),
+            self._debug_overlay_lines(frame.shape[1], frame.shape[0])
+            if self.debug_info_var.get()
+            else (),
         )
         available_width = max(self.video_label.winfo_width(), 320)
         available_height = max(self.video_label.winfo_height(), 240)
@@ -1303,10 +1366,10 @@ class SpineUpWindow:
             self._set_status("normal" if self.monitoring else "calibration")
             return
         if self.calibration is None:
-            messagebox.showinfo(
+            show_themed_message(
+                self.root,
                 APP_NAME,
                 "Сначала выполните калибровку по камере.",
-                parent=self.root,
             )
             return
         if self.monitoring:
@@ -1365,10 +1428,11 @@ class SpineUpWindow:
             added = self.load_demo_data()
         except (OSError, sqlite3.Error, RuntimeError, ValueError) as error:
             print(f"[SpineUp] Не удалось загрузить демо-данные: {error}")
-            messagebox.showerror(
+            show_themed_message(
+                self.root,
                 APP_NAME,
                 f"Не удалось загрузить демо-данные:\n{error}",
-                parent=self.root,
+                "error",
             )
             return
         if (
@@ -1376,9 +1440,7 @@ class SpineUpWindow:
             and self._statistics_window.window.winfo_exists()
         ):
             self._statistics_window.refresh()
-        messagebox.showinfo(
-            APP_NAME, f"Добавлено демо-сессий: {added}", parent=self.root
-        )
+        show_themed_message(self.root, APP_NAME, f"Добавлено демо-сессий: {added}")
 
     def close(self) -> None:
         """Stop Tk callbacks and release camera, detector, and database resources.

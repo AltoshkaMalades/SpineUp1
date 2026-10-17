@@ -7,6 +7,26 @@ import sys
 
 APP_NAME = "SpineUp"
 __version__ = "0.1.0"
+THEME = {
+    "background": "#FFFFFF",
+    "surface": "#EAF4FF",
+    "surface_hover": "#D8EBFF",
+    "accent": "#4DA3FF",
+    "accent_hover": "#318BE8",
+    "text": "#14304F",
+    "muted": "#66809B",
+    "border": "#C7E1FA",
+    "good": "#E8F6EE",
+    "good_text": "#286646",
+    "coral": "#FCEBE8",
+    "coral_text": "#A9473D",
+    "coral_border": "#F2C8C1",
+    "disabled": "#A6B8CA",
+    "skeleton_line_bgr": (255, 163, 77),
+    "skeleton_point_bgr": (140, 205, 145),
+    "debug_overlay_bgr": (255, 255, 255),
+    "font": "Segoe UI",
+}
 PROJECT_DIR = Path(__file__).resolve().parent
 APP_DATA_DIR = Path(
     os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming"
